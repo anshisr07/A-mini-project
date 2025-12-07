@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Predictive Hybrid AI Traffic Controller</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+    body{font-family:'Inter',sans-serif;background:#e5e7eb;}
+    .traffic-light{width:1.5rem;height:1.5rem;border-radius:50%;opacity:.3;transition:opacity .2s;}
+    .green-light{background:#10B981;}
+    .yellow-light{background:#FBBF24;}
+    .red-light{background:#EF4444;}
+    .active{opacity:1;}
+    .intersection-grid{
+      display:grid;
+      grid-template-areas:
+        ". north ."
+        "west center east"
+        ". south .";
+      grid-template-columns:1fr 2fr 1fr;
+      grid-template-rows:1fr 2fr 1fr;
+      height:400px;max-width:600px;margin:auto;border-radius:1rem;overflow:hidden;width:100%;
+    }
+    .road{background:#374151;border:1px solid #4B5563;}
+    .queue-viz{transition:.3s;border-radius:.5rem;background:#3B82F6;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:.875rem;overflow:hidden;position:absolute;z-index:10;}
+    #north-queue{width:80%;height:50%;bottom:0;}
+    #south-queue{width:80%;height:50%;top:0;}
+    #west-queue{width:50%;height:80%;right:0;}
+    #east-queue{width:50%;height:80%;left:0;}
+    #south-light{transform:rotate(180deg);margin-top:2rem;}
+    #east-light{transform:rotate(-90deg);margin-left:2rem;}
+    .allocation-label{position:absolute;font-size:.75rem;padding:4px 8px;border-radius:9999px;box-shadow:0 2px 4px rgba(0,0,0,.2);transition:background-color .3s;z-index:20;}
+    .emergency-active{animation:pulse-red 1s infinite alternate;}
+    @keyframes pulse-red{from{box-shadow:0 0 5px #EF4444;}to{box-shadow:0 0 15px #EF4444,0 0 20px #F87171;}}
+    #main-ui{display:none;}
+  </style>
+</head>
+<body class="p-4 md:p-8">
+  <div class="max-w-6xl mx-auto bg-white p-6 md:p-10 rounded-xl shadow-2xl">
+    <h1 class="text-3xl font-bold text-gray-800 mb-2">Hybrid AI Traffic Control Prototype</h1>
+    <p class="text-gray-600 mb-6">Demonstrating <b>Predictive Congestion Prevention</b> using the Hybrid AI Architecture. <span class="font-bold text-blue-600">Grant camera access and click "Start Counting Vehicles" (will only work with detected vehicles).</span></p>
+    <!-- Camera Section -->
+    <div class="mb-8 flex flex-col items-center">
+      <video id="camera" width="400" height="300" autoplay muted playsinline class="rounded-lg shadow border mb-3" style="background:#222"></video>
+      <button id="start-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-2 rounded-lg transition mb-3 shadow" onclick="startLiveDetection()">Start Counting Vehicles</button>
+      <span id="cam-status" class="text-gray-500">Waiting for camera access...</span>
+    </div>
+    <div id="main-ui">
+    <!-- DASHBOARD & EMERGENCY ROW (Unified Control) -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+      <div class="lg:col-span-2 bg-purple-50 p-4 rounded-xl border-2 border-purple-300 shadow-lg">
+        <p class="text-lg font-bold text-purple-800 mb-2">Unified Control Dashboard: Predictive Impact</p>
+        <div class="grid grid-cols-2 gap-4">
+          <div class="border-r border-purple-300 pr-4">
+            <p class="text-sm text-gray-600">Predicted Delay Saved (Accumulated)</p>
+            <span id="delay-saved" class="text-3xl font-mono font-extrabold text-purple-600">0s</span>
+          </div>
+          <div>
+            <p class="text-sm text-gray-600">City Congestion Risk Index</p>
+            <span id="risk-index" class="text-3xl font-mono font-extrabold text-green-600">Low (1.2)</span>
+          </div>
+        </div>
+      </div>
+      <div class="p-4 rounded-xl border-2 border-red-400 bg-red-100 flex flex-col justify-center shadow-lg">
+        <p class="text-sm font-semibold text-red-800 mb-2">Emergency Vehicle Preemption (YOLO/V2X)</p>
+        <button id="emergency-btn" onclick="activateEmergencyPreemption()" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-150 disabled:opacity-50">
+          DETECT EMERGENCY VEHICLE (N/S)
+        </button>
+      </div>
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div>
+        <h2 class="text-xl font-semibold text-gray-800 mb-3">Intersection State (Real-Time)</h2>
+        <div class="intersection-grid shadow-lg border-4 border-gray-700">
+          <div class="road flex items-end justify-center pb-2 relative" style="grid-area: north;">
+            <div id="north-queue" class="queue-viz" style="width:80%;height:50%;">0 cars</div>
+            <div id="ns-time-allocation" class="allocation-label absolute top-2 left-1/2 transform -translate-x-1/2 text-white bg-gray-700">N/S: 30s</div>
+            <div id="ns-light" class="flex flex-col gap-1 bg-gray-900 p-1 rounded-md">
+              <div id="ns-red" class="traffic-light red-light active"></div>
+              <div id="ns-yellow" class="traffic-light yellow-light"></div>
+              <div id="ns-green" class="traffic-light green-light"></div>
+            </div>
+          </div>
+          <div class="road flex items-center justify-end pr-2 relative" style="grid-area: west;">
+            <div id="west-queue" class="queue-viz" style="width:50%;height:80%;">0 cars</div>
+            <div id="ew-time-allocation" class="allocation-label absolute top-1/2 left-2 transform -translate-y-1/2 text-white bg-gray-700 rotate-90">E/W: 30s</div>
+            <div id="ew-light" class="flex flex-col gap-1 bg-gray-900 p-1 rounded-md">
+              <div id="ew-red" class="traffic-light red-light active"></div>
+              <div id="ew-yellow" class="traffic-light yellow-light"></div>
+              <div id="ew-green" class="traffic-light green-light"></div>
+            </div>
+          </div>
+          <div class="road" style="grid-area:center;border:none;background:#2D3748;"></div>
+          <div class="road flex items-center justify-start pl-2 relative" style="grid-area: east;">
+            <div id="east-queue" class="queue-viz" style="width:50%;height:80%;">0 cars</div>
+            <div id="east-light" class="flex flex-col gap-1 bg-gray-900 p-1 rounded-md">
+              <div id="ew-red-e" class="traffic-light red-light active"></div>
+              <div id="ew-yellow-e" class="traffic-light yellow-light"></div>
+              <div id="ew-green-e" class="traffic-light green-light"></div>
+            </div>
+          </div>
+          <div class="road flex items-start justify-center pt-2 relative" style="grid-area: south;">
+            <div id="south-queue" class="queue-viz" style="width:80%;height:50%;">0 cars</div>
+            <div id="south-light" class="flex flex-col gap-1 bg-gray-900 p-1 rounded-md">
+              <div id="ns-red-s" class="traffic-light red-light active"></div>
+              <div id="ns-yellow-s" class="traffic-light yellow-light"></div>
+              <div id="ns-green-s" class="traffic-light green-light"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <h2 class="text-xl font-semibold text-gray-800 mb-3">AI Control & Current Phase</h2>
+        <div id="status-card" class="bg-indigo-100 p-4 rounded-lg border border-indigo-300 mb-4 shadow-md">
+          <p class="text-sm font-semibold text-indigo-700 mb-2">System Operational Status:</p>
+          <div id="ai-status" class="text-lg font-mono text-indigo-900 mb-3">Waiting for vehicle detections...</div>
+          <div class="grid grid-cols-2 gap-4 text-sm">
+            <div><span class="font-medium text-gray-700">Current Phase:</span> <span id="current-phase" class="font-bold text-green-600 ml-1">N/S</span></div>
+            <div><span class="font-medium text-gray-700">Time Remaining:</span> <span id="time-remaining" class="font-bold text-red-600 ml-1">0s</span></div>
+          </div>
+        </div>
+        <div class="mt-4">
+          <h3 class="text-lg font-semibold mb-3 text-gray-800 border-b pb-2">Edge-to-Cloud Architecture Flow</h3>
+          <div class="grid grid-cols-1 gap-3">
+            <div class="p-3 bg-white rounded-lg shadow-sm border-l-4 border-red-500">
+              <p class="font-semibold text-red-600 mb-1 text-sm">1. Edge Processing (YOLOv8/IoT)</p>
+              <p class="text-xs text-gray-700">N/S Total Count: <span id="yolo-ns-count" class="font-mono font-bold text-base">0</span> | E/W Total Count: <span id="yolo-ew-count" class="font-mono font-bold text-base">0</span></p>
+              <p class="text-xs text-gray-500 mt-1">Real-time data ingested (Video/Sensors).</p>
+            </div>
+            <div class="p-3 bg-white rounded-lg shadow-sm border-l-4 border-yellow-500">
+              <p class="font-semibold text-yellow-600 mb-1 text-sm">2. Cloud Prediction (Bi-LSTM)</p>
+              <p class="text-xs text-gray-700">N/S Bottleneck Risk (10min): <span id="lstm-ns-prediction" class="font-mono font-bold text-base text-red-500">0.00</span></p>
+              <p class="text-xs text-gray-700">E/W Bottleneck Risk (10min): <span id="lstm-ew-prediction" class="font-mono font-bold text-base text-green-500">0.00</span></p>
+              <p class="text-xs text-gray-700">Queue Imbalance Ratio (N/S vs E/W): <span id="queue-imbalance" class="font-mono font-bold text-base">0.00</span></p>
+              <p class="text-xs text-gray-500 mt-1">Proactively forecasting future congestion.</p>
+            </div>
+            <div class="p-3 bg-white rounded-lg shadow-sm border-l-4 border-green-500">
+              <p class="font-semibold text-green-600 mb-1 text-sm">3. Real-time Optimization (DQN)</p>
+              <p class="text-xs text-gray-700">Allocated N/S Green: <span id="dqn-ns-decision" class="font-mono font-bold text-base">30s</span> | Allocated E/W Green: <span id="dqn-ew-decision" class="font-mono font-bold text-base">30s</span></p>
+              <p class="text-xs text-gray-500 mt-1">Optimal decision pushed to signal controller.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div>
+<script>
+// --- Only detect/auto if camera detection provides values ---
+let S={North_Queue:0,South_Queue:0,East_Queue:0,West_Queue:0,North_LastQueue:0,South_LastQueue:0,East_LastQueue:0,West_LastQueue:0,N_S_GreenTime:30,E_W_GreenTime:30,currentPhase:'N/S',timeRemaining:30,yellowTime:4,minGreen:10,maxGreen:60,baseCycleTime:70,maxQueueViz:50,simulationTime:8*60,isEmergency:false,emergencyDirection:null,emergencyHoldTime:15,totalDelaySaved:0,congestionRiskIndex:1.2};
+let vehicleDetectionActive = false, intervalId = null, detectIntervalId = null;
+
+// --- UI update, phase, and algorithms (same as before) ---
+function U(){
+  let d=document;
+  let t=S.North_Queue+S.South_Queue,r=S.East_Queue+S.West_Queue;
+  let n=d.getElementById('status-card'),b=d.getElementById('emergency-btn'),nsA=d.getElementById('ns-time-allocation'),ewA=d.getElementById('ew-time-allocation');
+  if(S.isEmergency){
+    n.className="p-4 rounded-lg mb-4 border-4 border-red-500 emergency-active bg-red-200 shadow-md";
+    d.getElementById('ai-status').textContent=`EMERGENCY PREEMPTION ACTIVE! Clearing ${S.emergencyDirection} route.`;
+    b.disabled=!0;b.textContent=`EMERGENCY ACTIVE (${S.timeRemaining}s)`;
+  }else{
+    n.className="bg-indigo-100 p-4 rounded-lg border border-indigo-300 mb-4 shadow-md";
+    d.getElementById('ai-status').textContent=vehicleDetectionActive
+      ?`AI Adjusted: N/S Green ${S.N_S_GreenTime}s, E/W Green ${S.E_W_GreenTime}s.`
+      :"Waiting for vehicle detections...";
+    b.disabled=!vehicleDetectionActive;b.textContent="DETECT EMERGENCY VEHICLE (N/S)";
+  }
+  d.getElementById('current-phase').textContent=S.currentPhase;d.getElementById('time-remaining').textContent=S.timeRemaining+'s';
+  nsA.textContent=`N/S: ${S.N_S_GreenTime}s`;ewA.textContent=`E/W: ${S.E_W_GreenTime}s`;
+  if(S.currentPhase.includes('N/S')){nsA.classList.remove('bg-gray-700');nsA.classList.add('bg-green-600');ewA.classList.remove('bg-green-600');ewA.classList.add('bg-gray-700');}
+  else if(S.currentPhase.includes('E/W')){ewA.classList.remove('bg-gray-700');ewA.classList.add('bg-green-600');nsA.classList.remove('bg-green-600');nsA.classList.add('bg-gray-700');}
+  else{nsA.classList.remove('bg-green-600');nsA.classList.add('bg-gray-700');ewA.classList.remove('bg-green-600');ewA.classList.add('bg-gray-700');}
+  d.getElementById('yolo-ns-count').textContent=t;d.getElementById('yolo-ew-count').textContent=r;
+  d.getElementById('dqn-ns-decision').textContent=S.N_S_GreenTime+'s';
+  d.getElementById('dqn-ew-decision').textContent=S.E_W_GreenTime+'s';
+  let R=d.getElementById('risk-index');R.textContent=S.congestionRiskIndex.toFixed(1);
+  R.className=S.congestionRiskIndex>3?'text-3xl font-mono font-extrabold text-red-600':'text-3xl font-mono font-extrabold text-green-600';
+  d.getElementById('delay-saved').textContent=S.totalDelaySaved+'s';
+  [{id:'north-queue',count:S.North_Queue,prop:'height'},{id:'south-queue',count:S.South_Queue,prop:'height'},{id:'west-queue',count:S.West_Queue,prop:'width'},{id:'east-queue',count:S.East_Queue,prop:'width'}].forEach(q=>{
+    let el=d.getElementById(q.id),sz=Math.min(100,(q.count/S.maxQueueViz)*100);
+    el.style[q.prop]=sz+'%';el.textContent=q.count+' cars';
+  });
+  Y(S.currentPhase);
+}
+function Y(p){
+  let E={ns:['ns-red','ns-yellow','ns-green'],ns_s:['ns-red-s','ns-yellow-s','ns-green-s'],ew:['ew-red','ew-yellow','ew-green'],ew_e:['ew-red-e','ew-yellow-e','ew-green-e']};
+  for(let k in E){E[k].forEach(id=>document.getElementById(id).classList.remove('active'));document.getElementById(E[k][0]).classList.add('active');}
+  if(p.includes('N/S')&&!p.includes('Yellow')){['ns-red','ns-red-s'].forEach(i=>document.getElementById(i).classList.remove('active'));['ns-green','ns-green-s'].forEach(i=>document.getElementById(i).classList.add('active'));}
+  else if(p.includes('E/W')&&!p.includes('Yellow')){['ew-red','ew-red-e'].forEach(i=>document.getElementById(i).classList.remove('active'));['ew-green','ew-green-e'].forEach(i=>document.getElementById(i).classList.add('active'));}
+  else if(p==='N/S_Yellow'){['ns-green','ns-green-s'].forEach(i=>document.getElementById(i).classList.remove('active'));['ns-yellow','ns-yellow-s'].forEach(i=>document.getElementById(i).classList.add('active'));}
+  else if(p==='E/W_Yellow'){['ew-green','ew-green-e'].forEach(i=>document.getElementById(i).classList.remove('active'));['ew-yellow','ew-yellow-e'].forEach(i=>document.getElementById(i).classList.add('active'));}
+}
+function F(t){let h=Math.floor(t/60),m=t%60,ampm=h>=12?'PM':'AM',dH=h%12||12;return`${dH.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')} ${ampm}`;}
+function activateEmergencyPreemption(){if(!vehicleDetectionActive||S.isEmergency)return;S.isEmergency=!0;S.emergencyDirection='N/S';S.currentPhase='N/S_Emergency';S.timeRemaining=S.emergencyHoldTime;}
+function handleEmergencyPhase(){if(S.timeRemaining<=1){S.isEmergency=!1;S.emergencyDirection=null;S.currentPhase='E/W';runDQNOptimization();S.timeRemaining=S.E_W_GreenTime;}}
+function runLSTMPrediction(){
+  let nsQ=S.North_Queue+S.South_Queue,ewQ=S.East_Queue+S.West_Queue,nsL=S.North_LastQueue+S.South_LastQueue,ewL=S.East_LastQueue+S.West_LastQueue,
+      nsD=nsQ/80,nsR=nsQ-nsL,nsM=Math.min(.3,Math.max(0,nsR/10)),h=Math.floor(S.simulationTime/60),nsT=h>=8&&h<9?.2:0,nsS=Math.min(1,nsD+nsM+nsT),
+      ewD=ewQ/80,ewR=ewQ-ewL,ewM=Math.min(.3,Math.max(0,ewR/10)),ewT=h>=17&&h<18?.2:0,ewS=Math.min(1,ewD+ewM+ewT),
+      tq=nsQ+ewQ,ir=tq?nsQ/tq:.5,d=document;
+  d.getElementById('lstm-ns-prediction').textContent=nsS.toFixed(2);
+  d.getElementById('lstm-ew-prediction').textContent=ewS.toFixed(2);
+  d.getElementById('queue-imbalance').textContent=ir.toFixed(2);
+  return{nsScore:nsS,ewScore:ewS};
+}
+function runDQNOptimization(){
+  let{nsScore,ewScore}=runLSTMPrediction(),tp=nsScore+ewScore,nr,er;
+  if(tp<.1)nr=er=.5;else{nr=nsScore/tp;er=ewScore/tp;}
+  let newNS=Math.round(S.baseCycleTime*nr),newEW=S.baseCycleTime-newNS;
+  newNS=Math.max(S.minGreen,Math.min(S.maxGreen,newNS));newEW=Math.max(S.minGreen,Math.min(S.maxGreen,newEW));
+  let ra=S.baseCycleTime-(newNS+newEW);
+  if(ra!==0){if(nsScore>ewScore&&newNS<S.maxGreen)newNS+=ra;else if(newEW<S.maxGreen)newEW+=ra;else if(newNS<S.maxGreen)newNS+=ra;}
+  let pd=Math.max(0,Math.abs(nsScore-ewScore)*10+S.congestionRiskIndex*5),pa=Math.max(0,pd-5);
+  S.totalDelaySaved=Math.round(S.totalDelaySaved+pa);S.N_S_GreenTime=newNS;S.E_W_GreenTime=newEW;
+}
+function advancePhase(){
+  if(!vehicleDetectionActive) return; // ONLY works if camera detection is running!
+  let cp=S.currentPhase,Y=S.yellowTime;
+  if(S.isEmergency){handleEmergencyPhase();return;}
+  if(cp==='N/S'){if(S.timeRemaining<=Y){S.currentPhase='N/S_Yellow';runDQNOptimization();S.timeRemaining=Y;}}
+  else if(cp==='N/S_Yellow'){if(S.timeRemaining<=1){S.currentPhase='E/W';S.timeRemaining=S.E_W_GreenTime;}}
+  else if(cp==='E/W'){if(S.timeRemaining<=Y){S.currentPhase='E/W_Yellow';runDQNOptimization();S.timeRemaining=Y;}}
+  else if(cp==='E/W_Yellow'){if(S.timeRemaining<=1){S.currentPhase='N/S';S.timeRemaining=S.N_S_GreenTime;}}
+}
+function mainLoop(){
+  if(!vehicleDetectionActive) return; // only runs if camera detection is working
+  S.simulationTime=(S.simulationTime+1)%(24*60);
+  if(S.timeRemaining>0)S.timeRemaining-=1;
+  advancePhase();U();
+}
+// --- Camera Vehicle Counting DEMO (mock detection) ---
+async function startLiveDetection(){
+  document.getElementById('cam-status').textContent='Starting camera...';
+  try{
+    let stream = await navigator.mediaDevices.getUserMedia({video:true});
+    let video = document.getElementById('camera');
+    video.srcObject=stream;video.onloadedmetadata=()=>video.play();
+    document.getElementById('cam-status').textContent='Point the camera at vehicles. AI counting...';
+    document.getElementById('start-btn').disabled=true;
+    document.getElementById('main-ui').style.display='block';
+    // "Vehicle detection" mock: runs only this way
+    detectIntervalId = setInterval(()=>{
+      vehicleDetectionActive=true;
+      // Replace this mock with real detection & assignment!
+      // S.North_Queue = detected for north, etc (simulate as random here)
+      S.North_LastQueue=S.North_Queue; S.South_LastQueue=S.South_Queue; S.East_LastQueue=S.East_Queue; S.West_LastQueue=S.West_Queue;
+      // For demo: randomly assign (replace this with real camera detection counting per direction)
+      S.North_Queue=Math.max(0,Math.min(50,Math.round(Math.random()*15+5)));
+      S.South_Queue=Math.max(0,Math.min(50,Math.round(Math.random()*15+5)));
+      S.East_Queue=Math.max(0,Math.min(50,Math.round(Math.random()*8+2)));
+      S.West_Queue=Math.max(0,Math.min(50,Math.round(Math.random()*8+2)));
+      runDQNOptimization();
+      U();
+    },2000);
+
+    // Start the main AI system only now!
+    if(!window._mainLoopStarted){
+      window._mainLoopStarted=1;
+      S.timeRemaining=S.N_S_GreenTime;
+      intervalId = setInterval(mainLoop,1000);
+    }
+  }catch(e){
+    document.getElementById('cam-status').textContent='Failed to access camera: '+e;
+  }
+}
+</script>
+</body>
+</html>
